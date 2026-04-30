@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "120677916324",
+    "project_id": "wiseassistdatabase",
+    "storage_bucket": "wiseassistdatabase.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:120677916324:android:02a0dfb4e9f6926059d031",
+        "android_client_info": {
+          "package_name": "com.example.wisewaste"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB20ijSEJrt4AsSG15bDjYgw96pyJAwSmQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:120677916324:android:4db1bc1d2cc6283e59d031",
+        "android_client_info": {
+          "package_name": "com.project.diabeteswiseassist"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB20ijSEJrt4AsSG15bDjYgw96pyJAwSmQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
