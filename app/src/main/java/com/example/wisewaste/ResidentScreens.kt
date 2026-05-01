@@ -276,13 +276,6 @@ fun ResidentDashboardScreen(onLogout: () -> Unit) {
     var selectedMenuItem by remember { mutableStateOf<String?>(null) }
     var refreshKey by remember { mutableStateOf(0) }
     val userId = authManager.getCurrentUserId()
-
-    // Refresh whenever refreshKey changes OR whenever the user closes a sub-screen
-    // (selectedMenuItem goes back to null). This ensures points awarded by the
-    // authority (COMPLETED status) are reflected immediately when the resident
-    // returns to the dashboard — even without a manual pull-to-refresh.
-    // reconcileCompletedPoints also fixes any pre-fix reports whose points were
-    // never credited — it is a no-op once everything is already correct.
     LaunchedEffect(userId, refreshKey, selectedMenuItem) {
         if (userId != null && selectedMenuItem == null) {
             reportCount = db.getUserReports(userId).size
