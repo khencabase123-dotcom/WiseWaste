@@ -73,6 +73,7 @@ data class DashboardMenuItem(
     val screen: String
 )
 
+// ==================== New Models for Authority Features ====================
 
 data class Announcement(
     val announcementId: String = "",
@@ -95,14 +96,14 @@ data class CollectionSchedule(
 )
 
 data class Notification(
-    val notificationId: String = "",
-    val userId: String = "",
-    val title: String = "",
-    val message: String = "",
-    val type: String = "GENERAL", // GENERAL, STATUS_UPDATE, ANNOUNCEMENT
-    val relatedId: String? = null,
-    val isRead: Boolean = false,
-    val createdAt: Timestamp = Timestamp.now()
+    @get:PropertyName("notificationId") @set:PropertyName("notificationId") var notificationId: String = "",
+    @get:PropertyName("userId")         @set:PropertyName("userId")         var userId: String = "",
+    @get:PropertyName("title")          @set:PropertyName("title")          var title: String = "",
+    @get:PropertyName("message")        @set:PropertyName("message")        var message: String = "",
+    @get:PropertyName("type")           @set:PropertyName("type")           var type: String = "GENERAL",
+    @get:PropertyName("relatedId")      @set:PropertyName("relatedId")      var relatedId: String? = null,
+    @get:PropertyName("isRead")         @set:PropertyName("isRead")         var isRead: Boolean = false,
+    @get:PropertyName("createdAt")      @set:PropertyName("createdAt")      var createdAt: Timestamp = Timestamp.now()
 )
 
 data class Guideline(

@@ -22,18 +22,6 @@ class FirebaseHelper {
         }
     }
 
-    suspend fun incrementUserPoints(userId: String, delta: Int): Boolean {
-        return try {
-            db.collection("users").document(userId)
-                .update("totalPoints", FieldValue.increment(delta.toLong()))
-                .await()
-            true
-        } catch (e: Exception) {
-            Log.e(tag, "incrementUserPoints failed for userId=$userId", e)
-            false
-        }
-    }
-
     suspend fun reconcileCompletedPoints(userId: String): Int {
         return try {
             // Read all COMPLETED reports for this user directly (uses existing index)
@@ -104,6 +92,7 @@ class FirebaseHelper {
             emptyList()
         }
     }
+
 
     suspend fun getAllReports(statusFilter: String? = null): List<WasteReport> {
         return try {
@@ -218,6 +207,152 @@ class FirebaseHelper {
         } catch (e: Exception) {
             Log.e(tag, "getEducationalContent failed", e)
             emptyList()
+        }
+    }
+
+    // ==================== Campaign Participation ====================
+
+    suspend fun getCampaignParticipants(campaignId: String): Set<String> {
+        return try {
+            val doc = db.collection("campaignParticipants").document(campaignId).get().await()
+            @Suppress("UNCHECKED_CAST")
+            (doc.get("userIds") as? List<String> ?: emptyList()).toSet()
+        } catch (e: Exception) {
+            Log.e(tag, "getCampaignParticipants failed for $campaignId", e)
+            emptySet()
+        }
+    }
+
+    suspend fun hasJoinedCampaign(campaignId: String, userId: String): Boolean {
+        return try {
+            val doc = db.collection("campaignParticipants").document(campaignId).get().await()
+            @Suppress("UNCHECKED_CAST")
+            val list = doc.get("userIds") as? List<String> ?: emptyList()
+            list.contains(userId)
+        } catch (e: Exception) {
+            Log.e(tag, "hasJoinedCampaign failed", e)
+            false
+        }
+    }
+
+    suspend fun joinCampaign(campaignId: String, userId: String): Boolean {
+        return try {
+            db.collection("campaignParticipants").document(campaignId)
+                .set(
+                    mapOf("userIds" to FieldValue.arrayUnion(userId)),
+                    com.google.firebase.firestore.SetOptions.merge()
+                )
+                .await()
+            Log.d(tag, "joinCampaign: userId=$userId campaignId=$campaignId")
+            true
+        } catch (e: Exception) {
+            Log.e(tag, "joinCampaign failed", e)
+            false
+        }
+    }
+
+    suspend fun completeCampaignAndAwardPoints(campaign: Campaign, pointsToAward: Int): Boolean {
+        return try {
+            // 1. Mark campaign as COMPLETED
+            val updated = campaign.copy(status = "COMPLETED")
+            db.collection("campaigns").document(campaign.campaignId).set(updated).await()
+
+            // 2. Fetch participants
+            val participants = getCampaignParticipants(campaign.campaignId)
+            Log.d(tag, "completeCampaign: ${participants.size} participants for ${campaign.campaignId}")
+
+            if (participants.isNotEmpty() && pointsToAward > 0) {
+                // 3. Batch-increment points for all participants
+                val batch = db.batch()
+                participants.forEach { uid ->
+                    val userRef = db.collection("users").document(uid)
+                    batch.update(userRef, "totalPoints", FieldValue.increment(pointsToAward.toLong()))
+                }
+                batch.commit().await()
+                Log.d(tag, "Awarded $pointsToAward pts to ${participants.size} participants")
+
+                // 4. Send notification to each participant (non-critical)
+                try {
+                    val notifBatch = db.batch()
+                    participants.forEach { uid ->
+                        val notifId = java.util.UUID.randomUUID().toString()
+                        val notif = Notification(
+                            notificationId = notifId,
+                            userId         = uid,
+                            title          = "Campaign Completed! 🎉",
+                            message        = "\"${campaign.title}\" has been completed. +$pointsToAward points have been added to your account!",
+                            type           = "ANNOUNCEMENT",
+                            relatedId      = campaign.campaignId
+                        )
+                        notifBatch.set(db.collection("notifications").document(notifId), notif)
+                    }
+                    notifBatch.commit().await()
+                } catch (notifEx: Exception) {
+                    Log.w(tag, "Notification broadcast failed (non-critical)", notifEx)
+                }
+            }
+
+            true
+        } catch (e: Exception) {
+            Log.e(tag, "completeCampaignAndAwardPoints failed", e)
+            false
+        }
+    }
+
+    suspend fun saveCampaign(campaign: Campaign): Boolean {
+        return try {
+            db.collection("campaigns").document(campaign.campaignId).set(campaign).await()
+            Log.d(tag, "saveCampaign success: ${campaign.campaignId}")
+
+            // Notify all residents of the new campaign
+            try {
+                val residents = db.collection("users")
+                    .whereEqualTo("role", "RESIDENT")
+                    .get().await()
+                val batch = db.batch()
+                residents.documents.forEach { doc ->
+                    val notifId = java.util.UUID.randomUUID().toString()
+                    val notif = Notification(
+                        notificationId = notifId,
+                        userId         = doc.id,
+                        title          = "New Campaign: ${campaign.title}",
+                        message        = campaign.description,
+                        type           = "ANNOUNCEMENT",
+                        relatedId      = campaign.campaignId
+                    )
+                    batch.set(db.collection("notifications").document(notifId), notif)
+                }
+                batch.commit().await()
+            } catch (notifEx: Exception) {
+                Log.w(tag, "Campaign notification failed (non-critical)", notifEx)
+            }
+
+            true
+        } catch (e: Exception) {
+            Log.e(tag, "saveCampaign failed", e)
+            false
+        }
+    }
+
+    suspend fun updateCampaign(campaign: Campaign): Boolean {
+        return try {
+            db.collection("campaigns").document(campaign.campaignId).set(campaign).await()
+            Log.d(tag, "updateCampaign success: ${campaign.campaignId}")
+            true
+        } catch (e: Exception) {
+            Log.e(tag, "updateCampaign failed", e)
+            false
+        }
+    }
+
+    suspend fun deleteCampaign(campaignId: String): Boolean {
+        return try {
+            db.collection("campaigns").document(campaignId).delete().await()
+            Log.d(tag, "deleteCampaign success: $campaignId")
+            true
+        } catch (e: Exception) {
+            Log.e(tag, "deleteCampaign failed", e)
+            false
         }
     }
 
@@ -344,6 +479,16 @@ class FirebaseHelper {
         }
     }
 
+    suspend fun deleteNotification(notificationId: String): Boolean {
+        return try {
+            db.collection("notifications").document(notificationId).delete().await()
+            true
+        } catch (e: Exception) {
+            Log.e(tag, "deleteNotification failed for $notificationId", e)
+            false
+        }
+    }
+
     suspend fun markNotificationRead(notificationId: String): Boolean {
         return try {
             db.collection("notifications").document(notificationId)
@@ -405,6 +550,30 @@ class FirebaseHelper {
         return try {
             db.collection("collectionSchedules").document(schedule.scheduleId).set(schedule).await()
             Log.d(tag, "updateCollectionSchedule success: ${schedule.scheduleId}")
+
+            // Notify all residents of the updated schedule
+            try {
+                val residents = db.collection("users")
+                    .whereEqualTo("role", "RESIDENT")
+                    .get().await()
+                val batch = db.batch()
+                residents.documents.forEach { doc ->
+                    val notifId = java.util.UUID.randomUUID().toString()
+                    val notif = Notification(
+                        notificationId = notifId,
+                        userId         = doc.id,
+                        title          = "Collection Schedule Updated",
+                        message        = "${schedule.wasteType} collection at ${schedule.area} has been updated to every ${schedule.dayOfWeek} at ${schedule.time}.",
+                        type           = "ANNOUNCEMENT",
+                        relatedId      = schedule.scheduleId
+                    )
+                    batch.set(db.collection("notifications").document(notifId), notif)
+                }
+                batch.commit().await()
+            } catch (notifEx: Exception) {
+                Log.w(tag, "Schedule update notification failed (non-critical)", notifEx)
+            }
+
             true
         } catch (e: Exception) {
             Log.e(tag, "updateCollectionSchedule failed", e)
@@ -412,10 +581,7 @@ class FirebaseHelper {
         }
     }
 
-    /**
-     * Returns the set of content IDs the user has already completed.
-     * Stored in: userProgress/{userId}/completedContent (array field).
-     */
+
     suspend fun getCompletedContentIds(userId: String): Set<String> {
         return try {
             val doc = db.collection("userProgress").document(userId).get().await()
@@ -452,6 +618,8 @@ class FirebaseHelper {
             false
         }
     }
+
+
 
     suspend fun getGuidelines(): List<Guideline> {
         return try {

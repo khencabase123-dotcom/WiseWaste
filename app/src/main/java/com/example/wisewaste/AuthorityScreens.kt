@@ -1,12 +1,16 @@
 package com.example.wisewaste
 
 import androidx.compose.foundation.*
-import androidx.compose.foundation.layout.*import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -45,11 +49,11 @@ fun AuthorityDashboardScreen(onLogout: () -> Unit) {
 
     // Authority-only menu — no resident features here
     val menuItems = listOf(
-        DashboardMenuItem("Post Announcement",    "📢", Color(0xFF1565C0), "announcement"),
         DashboardMenuItem("Review Submissions",   "📋", Color(0xFF2E7D32), "review"),
         DashboardMenuItem("Update Report Status", "🔄", Color(0xFFE65100), "update_status"),
         DashboardMenuItem("Filter Reports",       "🔍", Color(0xFF6A1B9A), "filter"),
         DashboardMenuItem("Collection Schedules", "🗓️", Color(0xFF00695C), "schedules"),
+        DashboardMenuItem("Campaigns",            "🎯", Color(0xFFC62828), "campaigns"),
         DashboardMenuItem("Leaderboard",          "🏆", Color(0xFF4527A0), "leaderboard")
     )
 
@@ -124,11 +128,11 @@ fun AuthorityDashboardScreen(onLogout: () -> Unit) {
     }
 
     when (selectedMenuItem) {
-        "announcement"  -> PostAnnouncementScreen(onClose   = { selectedMenuItem = null })
         "review"        -> ReviewSubmissionsScreen(statusFilter = null, onClose = { selectedMenuItem = null })
         "update_status" -> UpdateReportStatusScreen(onClose = { selectedMenuItem = null })
         "filter"        -> FilterReportsScreen(onClose      = { selectedMenuItem = null })
         "schedules"     -> CollectionSchedulesScreen(onClose = { selectedMenuItem = null })
+        "campaigns"     -> AuthorityCampaignScreen(onClose  = { selectedMenuItem = null })
         "leaderboard"   -> LeaderboardScreen(onClose        = { selectedMenuItem = null })
     }
 }
@@ -159,125 +163,6 @@ fun AuthorityMenuCard(item: DashboardMenuItem, onClick: () -> Unit) {
     }
 }
 
-// ==================== Post Announcement Screen ====================
-
-@Composable
-fun PostAnnouncementScreen(onClose: () -> Unit) {
-    val scope = rememberCoroutineScope()
-    val db = remember { FirebaseHelper() }
-    var title by remember { mutableStateOf("") }
-    var message by remember { mutableStateOf("") }
-    var priority by remember { mutableStateOf("NORMAL") }
-    var isLoading by remember { mutableStateOf(false) }
-    var errorMsg by remember { mutableStateOf<String?>(null) }
-    var showSuccess by remember { mutableStateOf(false) }
-    val userId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
-
-    // Fetch the authority's username so it can be stored with the announcement and campaign
-    var authorityName by remember { mutableStateOf("") }
-    LaunchedEffect(userId) {
-        authorityName = db.getUser(userId)?.username ?: "Authority"
-    }
-
-    Dialog(onDismissRequest = onClose) {
-        Card(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.9f), shape = RoundedCornerShape(16.dp)) {
-            Column(
-                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp)
-            ) {
-                Text("📢 Post Announcement", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                Text("Broadcast a message to all community members", fontSize = 13.sp, color = Color.Gray)
-                Spacer(modifier = Modifier.height(4.dp))
-                // Show who is posting
-                if (authorityName.isNotBlank()) {
-                    Text("Posting as: $authorityName", fontSize = 12.sp, color = Color(0xFF1565C0))
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-
-                OutlinedTextField(
-                    value = title, onValueChange = { title = it },
-                    label = { Text("Title") }, modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp), singleLine = true
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-
-                OutlinedTextField(
-                    value = message, onValueChange = { message = it },
-                    label = { Text("Message") }, modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp), minLines = 4
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Text("Priority", fontWeight = FontWeight.Medium)
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("NORMAL", "HIGH", "URGENT").forEach { p ->
-                        FilterChip(
-                            selected = priority == p,
-                            onClick = { priority = p },
-                            label = { Text(p) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = when (p) {
-                                    "URGENT" -> Color(0xFFD32F2F)
-                                    "HIGH"   -> Color(0xFFFF9800)
-                                    else     -> Color(0xFF1565C0)
-                                },
-                                selectedLabelColor = Color.White
-                            )
-                        )
-                    }
-                }
-
-                if (errorMsg != null) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(errorMsg!!, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedButton(onClick = onClose, modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(12.dp)) { Text("Cancel") }
-                    Button(
-                        onClick = {
-                            if (title.isBlank()) { errorMsg = "Title is required"; return@Button }
-                            if (message.isBlank()) { errorMsg = "Message is required"; return@Button }
-                            scope.launch {
-                                isLoading = true; errorMsg = null
-                                val announcement = Announcement(
-                                    announcementId = UUID.randomUUID().toString(),
-                                    authorityId = userId,
-                                    authorityName = authorityName,   // ✅ include name
-                                    title = title.trim(),
-                                    message = message.trim(),
-                                    priority = priority
-                                )
-                                if (db.postAnnouncement(announcement)) showSuccess = true
-                                else errorMsg = "Failed to post. Check Firestore permissions."
-                                isLoading = false
-                            }
-                        },
-                        modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0)),
-                        enabled = !isLoading
-                    ) {
-                        if (isLoading) CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White)
-                        else Text("Post")
-                    }
-                }
-            }
-        }
-    }
-
-    if (showSuccess) {
-        AlertDialog(
-            onDismissRequest = { showSuccess = false; onClose() },
-            title = { Text("Announcement Posted! ✅") },
-            text = { Text("All community members have been notified and it now appears in Campaigns.") },
-            confirmButton = { TextButton(onClick = { showSuccess = false; onClose() }) { Text("OK") } }
-        )
-    }
-}
-
 // ==================== Review Submissions Screen ====================
 
 @Composable
@@ -289,10 +174,7 @@ fun ReviewSubmissionsScreen(statusFilter: String?, onClose: () -> Unit) {
     var selectedReport by remember { mutableStateOf<WasteReport?>(null) }
 
     LaunchedEffect(statusFilter) {
-        val all = db.getAllReports(statusFilter)
-        // Review screen only shows actionable reports — COMPLETED and REJECTED
-        // are final states and are only visible in Filter Reports
-        reports = all.filter { it.status != "COMPLETED" && it.status != "REJECTED" }
+        reports = db.getAllReports(statusFilter)
         isLoading = false
     }
 
@@ -332,10 +214,7 @@ fun ReviewSubmissionsScreen(statusFilter: String?, onClose: () -> Unit) {
             onStatusUpdated = { newStatus ->
                 scope.launch {
                     val success = db.updateReportStatus(report.reportId, newStatus, report.userId, report.pointsAwarded)
-                    if (success) {
-                        val all = db.getAllReports(statusFilter)
-                        reports = all.filter { it.status != "COMPLETED" && it.status != "REJECTED" }
-                    }
+                    if (success) reports = db.getAllReports(statusFilter)
                     selectedReport = null
                 }
             }
@@ -364,7 +243,6 @@ fun FilterReportsScreen(onClose: () -> Unit) {
 
     val filters = listOf("ALL", "PENDING", "APPROVED", "COMPLETED", "REJECTED")
 
-    // Load all reports immediately on open — no need to press a filter first
     LaunchedEffect(Unit) {
         reports = db.getAllReports(null)
         isLoading = false
@@ -461,17 +339,17 @@ fun CollectionSchedulesScreen(onClose: () -> Unit) {
             Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column {
                         Text("🗓️ Collection Schedules", fontSize = 20.sp, fontWeight = FontWeight.Bold)
                         Text("Manage pickup schedules", fontSize = 13.sp, color = Color.Gray)
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = { showAddDialog = true },
+                        modifier = Modifier.widthIn(min = 80.dp),
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00695C)),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-                    ) { Text("+ Add", maxLines = 1) }
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                    ) { Text("+ Add", fontSize = 13.sp, maxLines = 1) }
                 }
                 Spacer(modifier = Modifier.height(12.dp))
 
@@ -502,8 +380,8 @@ fun CollectionSchedulesScreen(onClose: () -> Unit) {
                                         OutlinedButton(
                                             onClick = { editingSchedule = s },
                                             shape = RoundedCornerShape(8.dp),
-                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                                        ) { Text("✏️ Edit", fontSize = 12.sp, maxLines = 1) }
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                        ) { Text("✏️ Edit", fontSize = 12.sp) }
                                     }
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text("♻️ ${s.wasteType} · 🕐 ${s.time}", fontSize = 13.sp, color = Color.Gray)
@@ -553,26 +431,11 @@ fun AddScheduleDialog(
     var area by remember { mutableStateOf(existing?.area ?: "") }
     var wasteType by remember { mutableStateOf(existing?.wasteType ?: "") }
     var dayOfWeek by remember { mutableStateOf(existing?.dayOfWeek ?: "Monday") }
+    var time by remember { mutableStateOf(existing?.time ?: "") }
     var notes by remember { mutableStateOf(existing?.notes ?: "") }
     var errorMsg by remember { mutableStateOf<String?>(null) }
     val userId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
     val days = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
-
-    // Parse existing time into components if editing
-    val parsedHour = existing?.time?.split(":")?.getOrNull(0)?.trim()?.toIntOrNull() ?: 7
-    val parsedMinute = existing?.time?.split(":")?.getOrNull(1)?.trim()?.split(" ")?.getOrNull(0)?.toIntOrNull() ?: 0
-    val parsedAmPm = if (existing?.time?.contains("PM") == true) "PM" else "AM"
-
-    var selectedHour by remember { mutableStateOf(parsedHour) }
-    var selectedMinute by remember { mutableStateOf(parsedMinute) }
-    var selectedAmPm by remember { mutableStateOf(parsedAmPm) }
-    var hourExpanded by remember { mutableStateOf(false) }
-    var minuteExpanded by remember { mutableStateOf(false) }
-    var amPmExpanded by remember { mutableStateOf(false) }
-
-    val hours = (1..12).toList()
-    val minutes = (0..59).toList()
-    val formattedTime = "%02d:%02d %s".format(selectedHour, selectedMinute, selectedAmPm)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -592,109 +455,9 @@ fun AddScheduleDialog(
                             label = { Text(day.take(3)) })
                     }
                 }
-
-                // Time picker — Hour / Minute / AM-PM dropdowns
-                Text("Time", fontSize = 13.sp, color = Color.Gray)
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    // Hour dropdown (1–12, scrollable)
-                    Box(modifier = Modifier.weight(1f)) {
-                        Surface(
-                            modifier = Modifier.fillMaxWidth().clickable { hourExpanded = true },
-                            shape = RoundedCornerShape(10.dp),
-                            border = BorderStroke(1.dp, Color(0xFFBDBDBD))
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column {
-                                    Text("Hr", fontSize = 10.sp, color = Color.Gray)
-                                    Text("%02d".format(selectedHour), fontSize = 14.sp)
-                                }
-                                Text("▾", fontSize = 14.sp, color = Color.Gray)
-                            }
-                        }
-                        DropdownMenu(
-                            expanded = hourExpanded,
-                            onDismissRequest = { hourExpanded = false },
-                            modifier = Modifier.height(200.dp)
-                        ) {
-                            hours.forEach { h ->
-                                DropdownMenuItem(
-                                    text = { Text("%02d".format(h)) },
-                                    onClick = { selectedHour = h; hourExpanded = false }
-                                )
-                            }
-                        }
-                    }
-
-                    Text(":", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-
-                    // Minute dropdown (00–59, scrollable)
-                    Box(modifier = Modifier.weight(1f)) {
-                        Surface(
-                            modifier = Modifier.fillMaxWidth().clickable { minuteExpanded = true },
-                            shape = RoundedCornerShape(10.dp),
-                            border = BorderStroke(1.dp, Color(0xFFBDBDBD))
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column {
-                                    Text("Min", fontSize = 10.sp, color = Color.Gray)
-                                    Text("%02d".format(selectedMinute), fontSize = 14.sp)
-                                }
-                                Text("▾", fontSize = 14.sp, color = Color.Gray)
-                            }
-                        }
-                        DropdownMenu(
-                            expanded = minuteExpanded,
-                            onDismissRequest = { minuteExpanded = false },
-                            modifier = Modifier.height(200.dp)
-                        ) {
-                            minutes.forEach { m ->
-                                DropdownMenuItem(
-                                    text = { Text("%02d".format(m)) },
-                                    onClick = { selectedMinute = m; minuteExpanded = false }
-                                )
-                            }
-                        }
-                    }
-
-                    // AM/PM dropdown
-                    Box(modifier = Modifier.weight(1f)) {
-                        Surface(
-                            modifier = Modifier.fillMaxWidth().clickable { amPmExpanded = true },
-                            shape = RoundedCornerShape(10.dp),
-                            border = BorderStroke(1.dp, Color(0xFFBDBDBD))
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(selectedAmPm, fontSize = 14.sp)
-                                Text("▾", fontSize = 14.sp, color = Color.Gray)
-                            }
-                        }
-                        DropdownMenu(expanded = amPmExpanded, onDismissRequest = { amPmExpanded = false }) {
-                            listOf("AM", "PM").forEach { ap ->
-                                DropdownMenuItem(
-                                    text = { Text(ap) },
-                                    onClick = { selectedAmPm = ap; amPmExpanded = false }
-                                )
-                            }
-                        }
-                    }
-                }
-
+                OutlinedTextField(value = time, onValueChange = { time = it },
+                    label = { Text("Time (e.g. 7:00 AM)") }, modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp), singleLine = true)
                 OutlinedTextField(value = notes, onValueChange = { notes = it },
                     label = { Text("Notes (optional)") }, modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp))
@@ -705,10 +468,11 @@ fun AddScheduleDialog(
             TextButton(onClick = {
                 if (area.isBlank()) { errorMsg = "Area is required"; return@TextButton }
                 if (wasteType.isBlank()) { errorMsg = "Waste type is required"; return@TextButton }
+                if (time.isBlank()) { errorMsg = "Time is required"; return@TextButton }
                 onSaved(CollectionSchedule(
                     scheduleId = existing?.scheduleId ?: UUID.randomUUID().toString(),
                     area = area.trim(), wasteType = wasteType.trim(),
-                    dayOfWeek = dayOfWeek, time = formattedTime,
+                    dayOfWeek = dayOfWeek, time = time.trim(),
                     notes = notes.ifBlank { null }, createdBy = userId
                 ))
             }) { Text(if (isEditing) "Update" else "Save") }
@@ -797,6 +561,611 @@ fun UpdateStatusDialog(report: WasteReport, onDismiss: () -> Unit, onStatusUpdat
         confirmButton = { TextButton(onClick = { onStatusUpdated(selected) }) { Text("Update") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
+}
+
+// ==================== Authority Campaign Screen ====================
+
+@Composable
+fun AuthorityCampaignScreen(onClose: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val db = remember { FirebaseHelper() }
+    val userId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+    var authorityName by remember { mutableStateOf("") }
+    var campaigns by remember { mutableStateOf<List<Campaign>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+    var showAddDialog by remember { mutableStateOf(false) }
+    var editingCampaign by remember { mutableStateOf<Campaign?>(null) }
+    var deletingId by remember { mutableStateOf<String?>(null) }
+    var confirmDeleteCampaign by remember { mutableStateOf<Campaign?>(null) }
+    var viewingParticipantsCampaign by remember { mutableStateOf<Campaign?>(null) }
+
+    LaunchedEffect(userId) {
+        authorityName = db.getUser(userId)?.username ?: "Authority"
+        campaigns = db.getCampaigns()
+        isLoading = false
+    }
+
+    Dialog(onDismissRequest = onClose) {
+        Card(
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(0.92f),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+
+                // Header row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("🎯 Campaigns", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Text("Manage community campaigns", fontSize = 13.sp, color = Color.Gray)
+                    }
+                    Button(
+                        onClick = { showAddDialog = true },
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC62828)),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                    ) { Text("+ Add", fontSize = 13.sp) }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (isLoading) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = Color(0xFFC62828))
+                    }
+                } else if (campaigns.isEmpty()) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("🎯", fontSize = 64.sp)
+                            Text("No campaigns yet", color = Color.Gray)
+                            Text("Tap + Add to create one", fontSize = 12.sp, color = Color.Gray)
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(campaigns, key = { it.campaignId }) { campaign ->
+                            AuthorityCampaignCard(
+                                campaign = campaign,
+                                isDeleting = deletingId == campaign.campaignId,
+                                onEdit = { editingCampaign = campaign },
+                                onDelete = { confirmDeleteCampaign = campaign },
+                                onViewParticipants = { viewingParticipantsCampaign = campaign },
+                                onMarkCompleted = {
+                                    if (campaign.status != "COMPLETED") {
+                                        scope.launch {
+                                            val pts = if (campaign.pointsReward > 0) campaign.pointsReward else 50
+                                            val success = db.completeCampaignAndAwardPoints(campaign, pts)
+                                            if (success) {
+                                                campaigns = campaigns.map {
+                                                    if (it.campaignId == campaign.campaignId)
+                                                        it.copy(status = "COMPLETED") else it
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Add Campaign dialog ----
+    if (showAddDialog) {
+        CampaignFormDialog(
+            title = "Add Campaign",
+            initial = null,
+            authorityName = authorityName,
+            onDismiss = { showAddDialog = false },
+            onSave = { newCampaign ->
+                scope.launch {
+                    if (db.saveCampaign(newCampaign)) campaigns = db.getCampaigns()
+                    showAddDialog = false
+                }
+            }
+        )
+    }
+
+    // ---- Edit Campaign dialog ----
+    editingCampaign?.let { camp ->
+        CampaignFormDialog(
+            title = "Edit Campaign",
+            initial = camp,
+            authorityName = authorityName,
+            onDismiss = { editingCampaign = null },
+            onSave = { updated ->
+                scope.launch {
+                    if (db.updateCampaign(updated)) {
+                        campaigns = campaigns.map { if (it.campaignId == updated.campaignId) updated else it }
+                    }
+                    editingCampaign = null
+                }
+            }
+        )
+    }
+
+    // ---- Confirm Delete dialog ----
+    confirmDeleteCampaign?.let { camp ->
+        AlertDialog(
+            onDismissRequest = { confirmDeleteCampaign = null },
+            title = { Text("Delete Campaign") },
+            text = { Text("Are you sure you want to delete \"${camp.title}\"? This cannot be undone.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch {
+                        deletingId = camp.campaignId
+                        if (db.deleteCampaign(camp.campaignId)) {
+                            campaigns = campaigns.filter { it.campaignId != camp.campaignId }
+                        }
+                        deletingId = null
+                        confirmDeleteCampaign = null
+                    }
+                }) { Text("Delete", color = Color(0xFFD32F2F)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDeleteCampaign = null }) { Text("Cancel") }
+            }
+        )
+    }
+
+    // ---- View Participants dialog ----
+    viewingParticipantsCampaign?.let { camp ->
+        var participants by remember { mutableStateOf<List<User>>(emptyList()) }
+        var loadingParticipants by remember { mutableStateOf(true) }
+
+        LaunchedEffect(camp.campaignId) {
+            val ids = db.getCampaignParticipants(camp.campaignId)
+            participants = ids.mapNotNull { db.getUser(it) }
+            loadingParticipants = false
+        }
+
+        AlertDialog(
+            onDismissRequest = { viewingParticipantsCampaign = null },
+            title = {
+                Column {
+                    Text("👥 Participants", fontWeight = FontWeight.Bold)
+                    Text(camp.title, fontSize = 13.sp, color = Color.Gray)
+                }
+            },
+            text = {
+                Box(modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp, max = 320.dp)) {
+                    if (loadingParticipants) {
+                        CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                    } else if (participants.isEmpty()) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text("👤", fontSize = 40.sp)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("No one has joined yet", color = Color.Gray, fontSize = 14.sp)
+                        }
+                    } else {
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            item {
+                                Text(
+                                    "${participants.size} joined · ${camp.pointsReward.takeIf { it > 0 } ?: 50} pts each on completion",
+                                    fontSize = 12.sp, color = Color.Gray,
+                                    modifier = Modifier.padding(bottom = 4.dp)
+                                )
+                            }
+                            items(participants) { user ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(Color(0xFFF5F5F5), RoundedCornerShape(8.dp))
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(50),
+                                        color = Color(0xFF4CAF50).copy(alpha = 0.15f),
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text(
+                                                user.username.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFF2E7D32)
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column {
+                                        Text(user.username, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                        Text(user.email, fontSize = 11.sp, color = Color.Gray)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { viewingParticipantsCampaign = null }) { Text("Close") }
+            }
+        )
+    }
+}
+
+@Composable
+fun AuthorityCampaignCard(
+    campaign: Campaign,
+    isDeleting: Boolean,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onViewParticipants: () -> Unit,
+    onMarkCompleted: () -> Unit
+) {
+    val statusColor = when (campaign.status) {
+        "ACTIVE"    -> Color(0xFF4CAF50)
+        "COMPLETED" -> Color(0xFF2196F3)
+        "UPCOMING"  -> Color(0xFFFF9800)
+        else        -> Color(0xFF607D8B)
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(2.dp)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+
+            // Title row + status badge
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    campaign.title,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = statusColor.copy(alpha = 0.15f)
+                ) {
+                    Text(
+                        campaign.status,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = statusColor
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(campaign.description, fontSize = 13.sp, color = Color.Gray, maxLines = 2)
+
+            if (!campaign.location.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text("📍 ${campaign.location}", fontSize = 12.sp, color = Color(0xFF1565C0))
+            }
+
+            if (campaign.pointsReward > 0) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text("⭐ +${campaign.pointsReward} pts reward", fontSize = 12.sp, color = Color(0xFF4CAF50))
+            }
+
+            if (campaign.postedBy.isNotBlank()) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text("Posted by: ${campaign.postedBy}", fontSize = 11.sp, color = Color.LightGray)
+            }
+
+            // Dates — locale read observably so Compose recomposes on locale change
+            val locale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
+            val sdf = java.text.SimpleDateFormat("MMM dd, yyyy", locale)
+            val startStr = sdf.format(campaign.startDate.toDate())
+            val endStr   = sdf.format(campaign.endDate.toDate())
+            Spacer(modifier = Modifier.height(4.dp))
+            Text("📅 $startStr → $endStr", fontSize = 11.sp, color = Color.Gray)
+
+            Spacer(modifier = Modifier.height(10.dp))
+            HorizontalDivider(color = Color(0xFFF0F0F0))
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Action row — Edit | Delete | Participants | Mark Completed
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Edit button
+                OutlinedButton(
+                    onClick = onEdit,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                    border = BorderStroke(1.dp, Color(0xFF1565C0))
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = "Edit",
+                        tint = Color(0xFF1565C0), modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text("Edit", fontSize = 11.sp, color = Color(0xFF1565C0))
+                }
+
+                // Delete button
+                OutlinedButton(
+                    onClick = onDelete,
+                    enabled = !isDeleting,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                    border = BorderStroke(1.dp, Color(0xFFD32F2F))
+                ) {
+                    if (isDeleting) {
+                        CircularProgressIndicator(modifier = Modifier.size(14.dp),
+                            color = Color(0xFFD32F2F), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete",
+                            tint = Color(0xFFD32F2F), modifier = Modifier.size(14.dp))
+                    }
+                }
+
+                // Participants button
+                OutlinedButton(
+                    onClick = onViewParticipants,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                    border = BorderStroke(1.dp, Color(0xFF00695C))
+                ) {
+                    Text("👥", fontSize = 12.sp)
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text("Joined", fontSize = 11.sp, color = Color(0xFF00695C))
+                }
+
+                // Mark Completed button (hidden if already completed)
+                if (campaign.status != "COMPLETED") {
+                    Button(
+                        onClick = onMarkCompleted,
+                        modifier = Modifier.weight(1.4f),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2196F3)),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp)
+                    ) {
+                        Text("✓ Done", fontSize = 11.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CampaignFormDialog(
+    title: String,
+    initial: Campaign?,
+    authorityName: String,
+    onDismiss: () -> Unit,
+    onSave: (Campaign) -> Unit
+) {
+    var campaignTitle by remember { mutableStateOf(initial?.title ?: "") }
+    var description by remember { mutableStateOf(initial?.description ?: "") }
+    var location by remember { mutableStateOf(initial?.location ?: "") }
+    var pointsReward by remember { mutableStateOf(
+        if ((initial?.pointsReward ?: 50) > 0) (initial?.pointsReward ?: 50).toString() else "50"
+    ) }
+    var status by remember { mutableStateOf(initial?.status ?: "UPCOMING") }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+    var isSaving by remember { mutableStateOf(false) }
+
+    // Date picker state — initialise from existing campaign or today
+    val todayMillis = System.currentTimeMillis()
+    val initialStartMillis = initial?.startDate?.toDate()?.time ?: todayMillis
+    val initialEndMillis = initial?.endDate?.toDate()?.time ?: todayMillis
+
+    var showStartPicker by remember { mutableStateOf(false) }
+    var showEndPicker by remember { mutableStateOf(false) }
+    val startPickerState = rememberDatePickerState(initialSelectedDateMillis = initialStartMillis)
+    val endPickerState   = rememberDatePickerState(initialSelectedDateMillis = initialEndMillis)
+
+    // Formatted display strings — locale read observably so Compose recomposes on locale change
+    val locale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
+    fun millisToDisplay(millis: Long?): String {
+        if (millis == null) return "Not set"
+        val sdf = java.text.SimpleDateFormat("MMM dd, yyyy", locale)
+        return sdf.format(java.util.Date(millis))
+    }
+
+    val statuses = listOf("UPCOMING", "ACTIVE", "COMPLETED")
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(0.92f),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(20.dp)
+            ) {
+                Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text("Posted as: $authorityName", fontSize = 12.sp, color = Color(0xFFC62828))
+                Spacer(modifier = Modifier.height(16.dp))
+
+                OutlinedTextField(
+                    value = campaignTitle, onValueChange = { campaignTitle = it },
+                    label = { Text("Campaign Title *") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp), singleLine = true
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = description, onValueChange = { description = it },
+                    label = { Text("Description *") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp), minLines = 3
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = location, onValueChange = { location = it },
+                    label = { Text("Location (optional)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp), singleLine = true
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = pointsReward, onValueChange = { pointsReward = it },
+                    label = { Text("Points Reward") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp), singleLine = true
+                )
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // ---- Date Pickers ----
+                Text("Campaign Dates", fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Start Date
+                OutlinedButton(
+                    onClick = { showStartPicker = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        "📅 Start: ${millisToDisplay(startPickerState.selectedDateMillis)}",
+                        fontSize = 13.sp
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // End Date
+                OutlinedButton(
+                    onClick = { showEndPicker = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        "📅 End: ${millisToDisplay(endPickerState.selectedDateMillis)}",
+                        fontSize = 13.sp
+                    )
+                }
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // ---- Status ----
+                Text("Status", fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    statuses.forEach { s ->
+                        val sColor = when (s) {
+                            "ACTIVE"    -> Color(0xFF4CAF50)
+                            "COMPLETED" -> Color(0xFF2196F3)
+                            else        -> Color(0xFFFF9800)
+                        }
+                        FilterChip(
+                            selected = status == s,
+                            onClick = { status = s },
+                            label = { Text(s, fontSize = 12.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = sColor,
+                                selectedLabelColor = Color.White
+                            )
+                        )
+                    }
+                }
+
+                if (errorMsg != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(errorMsg!!, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) { Text("Cancel") }
+
+                    Button(
+                        onClick = {
+                            if (campaignTitle.isBlank()) { errorMsg = "Title is required"; return@Button }
+                            if (description.isBlank()) { errorMsg = "Description is required"; return@Button }
+                            val pts = pointsReward.trim().let {
+                                if (it.isBlank()) 50 else it.toIntOrNull() ?: -1
+                            }
+                            if (pts < 0) { errorMsg = "Points must be a valid number"; return@Button }
+                            val startTs = com.google.firebase.Timestamp(
+                                java.util.Date(startPickerState.selectedDateMillis ?: todayMillis)
+                            )
+                            val endTs = com.google.firebase.Timestamp(
+                                java.util.Date(endPickerState.selectedDateMillis ?: todayMillis)
+                            )
+                            isSaving = true
+                            val campaign = Campaign(
+                                campaignId   = initial?.campaignId ?: UUID.randomUUID().toString(),
+                                title        = campaignTitle.trim(),
+                                description  = description.trim(),
+                                location     = location.trim().ifBlank { null },
+                                pointsReward = pts,
+                                status       = status,
+                                postedBy     = authorityName,
+                                startDate    = startTs,
+                                endDate      = endTs
+                            )
+                            onSave(campaign)
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC62828)),
+                        enabled = !isSaving
+                    ) {
+                        if (isSaving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
+                        else Text("Save")
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Start Date Picker Dialog ----
+    if (showStartPicker) {
+        DatePickerDialog(
+            onDismissRequest = { showStartPicker = false },
+            confirmButton = {
+                TextButton(onClick = { showStartPicker = false }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showStartPicker = false }) { Text("Cancel") }
+            }
+        ) {
+            DatePicker(state = startPickerState)
+        }
+    }
+
+    // ---- End Date Picker Dialog ----
+    if (showEndPicker) {
+        DatePickerDialog(
+            onDismissRequest = { showEndPicker = false },
+            confirmButton = {
+                TextButton(onClick = { showEndPicker = false }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEndPicker = false }) { Text("Cancel") }
+            }
+        ) {
+            DatePicker(state = endPickerState)
+        }
+    }
 }
 
 fun statusColor(status: String): Color = when (status) {

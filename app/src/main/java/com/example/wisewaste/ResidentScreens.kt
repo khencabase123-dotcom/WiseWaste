@@ -1,5 +1,6 @@
 package com.example.wisewaste
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -8,6 +9,8 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -284,24 +287,29 @@ fun ResidentDashboardScreen(onLogout: () -> Unit) {
     var refreshKey by remember { mutableStateOf(0) }
     val userId = authManager.getCurrentUserId()
 
+    // Refresh whenever refreshKey changes OR whenever the user closes a sub-screen
+    // (selectedMenuItem goes back to null). This ensures points awarded by the
+    // authority (COMPLETED status) are reflected immediately when the resident
+    // returns to the dashboard — even without a manual pull-to-refresh.
     LaunchedEffect(userId, refreshKey, selectedMenuItem) {
         if (userId != null && selectedMenuItem == null) {
             reportCount = db.getUserReports(userId).size
-            // reconcile returns the corrected totalPoints (writes to Firestore if needed)
-            userPoints = db.reconcileCompletedPoints(userId)
             currentUser = db.getUser(userId)
+            // Read totalPoints directly from Firestore so campaign and education
+            // points are included — not just waste report points
+            userPoints = currentUser?.totalPoints ?: 0
         }
     }
 
     // Resident-only menu — authority items are NOT present here
     val menuItems = listOf(
+        DashboardMenuItem("Campaigns",           "🌍", Color(0xFFFF9800), "campaigns"),
         DashboardMenuItem("Notifications",       "🔔", Color(0xFFE53935), "notifications"),
         DashboardMenuItem("Guidelines",          "📖", Color(0xFF1976D2), "guidelines"),
         DashboardMenuItem("Collection Schedule", "🗓️", Color(0xFF00897B), "schedule"),
         DashboardMenuItem("Report Waste Issue",  "📝", Color(0xFF4CAF50), "report"),
         DashboardMenuItem("My Report Status",    "📋", Color(0xFF607D8B), "myreports"),
         DashboardMenuItem("Learn & Earn",        "📚", Color(0xFF2196F3), "education"),
-        DashboardMenuItem("Campaigns",           "🌍", Color(0xFFFF9800), "campaigns"),
         DashboardMenuItem("Leaderboard",         "🏆", Color(0xFF9C27B0), "leaderboard")
     )
 
@@ -379,6 +387,7 @@ fun ResidentDashboardScreen(onLogout: () -> Unit) {
     }
 
     when (selectedMenuItem) {
+        "campaigns"     -> CampaignScreen(onClose        = { selectedMenuItem = null })
         "notifications" -> NotificationsScreen(onClose   = { selectedMenuItem = null })
         "guidelines"    -> GuidelinesScreen(onClose      = { selectedMenuItem = null })
         "schedule"      -> ResidentScheduleScreen(onClose = { selectedMenuItem = null })
@@ -395,7 +404,6 @@ fun ResidentDashboardScreen(onLogout: () -> Unit) {
         )
         "myreports"     -> MyReportsScreen(refreshKey = refreshKey, onClose = { refreshKey++; selectedMenuItem = null })
         "education"     -> EducationScreen(onClose = { selectedMenuItem = null }, onPointsEarned = { refreshKey++ })
-        "campaigns"     -> CampaignScreen(onClose        = { selectedMenuItem = null })
         "leaderboard"   -> LeaderboardScreen(onClose     = { selectedMenuItem = null })
     }
 
@@ -406,7 +414,7 @@ fun ResidentDashboardScreen(onLogout: () -> Unit) {
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("📝 Report a waste issue: +10–25 pts")
-                    Text("📚 Complete educational content: +5 pts each")
+                    Text("📚 Complete educational content: +10 pts each")
                     Text("🌍 Join a campaign: +50 pts per campaign")
                     Text("🔝 Higher-ranked waste types earn more pts/kg")
                 }
@@ -466,11 +474,19 @@ fun NotificationsScreen(onClose: () -> Unit) {
     val scope = rememberCoroutineScope()
     var notifications by remember { mutableStateOf<List<Notification>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
+    var deletingId by remember { mutableStateOf<String?>(null) }
+    var refreshKey by remember { mutableStateOf(0) }
     val userId = FirebaseAuth.getInstance().currentUser?.uid
 
-    LaunchedEffect(userId) {
+    LaunchedEffect(userId, refreshKey) {
+        isLoading = true
         if (userId != null) {
-            notifications = db.getUserNotifications(userId)
+            val fetched = db.getUserNotifications(userId)
+            val unread = fetched.filter { !it.isRead }
+            if (unread.isNotEmpty()) {
+                unread.forEach { db.markNotificationRead(it.notificationId) }
+            }
+            notifications = fetched.map { it.copy(isRead = true) }
         }
         isLoading = false
     }
@@ -478,8 +494,19 @@ fun NotificationsScreen(onClose: () -> Unit) {
     Dialog(onDismissRequest = onClose) {
         Card(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.9f), shape = RoundedCornerShape(16.dp)) {
             Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-                Text("🔔 Notifications", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                Text("Announcements and status updates", fontSize = 13.sp, color = Color.Gray)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("🔔 Notifications", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Text("Announcements and status updates", fontSize = 13.sp, color = Color.Gray)
+                    }
+                    IconButton(onClick = { refreshKey++ }) {
+                        Text("🔄", fontSize = 20.sp)
+                    }
+                }
                 Spacer(modifier = Modifier.height(12.dp))
 
                 if (isLoading) {
@@ -492,23 +519,21 @@ fun NotificationsScreen(onClose: () -> Unit) {
                         }
                     }
                 } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(notifications) { notif ->
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(notifications, key = { it.notificationId }) { notif ->
                             Card(
-                                modifier = Modifier.fillMaxWidth().clickable {
-                                    if (!notif.isRead) scope.launch {
-                                        db.markNotificationRead(notif.notificationId)
-                                        notifications = notifications.map {
-                                            if (it.notificationId == notif.notificationId) it.copy(isRead = true) else it
-                                        }
-                                    }
-                                },
+                                modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(12.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = if (notif.isRead) Color.White else Color(0xFFE8F5E9)
-                                )
+                                colors = CardDefaults.cardColors(containerColor = Color.White)
                             ) {
-                                Row(modifier = Modifier.padding(14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Row(
+                                    modifier = Modifier.padding(start = 14.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                     Text(
                                         when (notif.type) { "STATUS_UPDATE" -> "🔄"; "ANNOUNCEMENT" -> "📢"; else -> "📬" },
                                         fontSize = 28.sp
@@ -522,6 +547,34 @@ fun NotificationsScreen(onClose: () -> Unit) {
                                             }
                                         }
                                         Text(notif.message, fontSize = 13.sp, color = Color.Gray)
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            scope.launch {
+                                                deletingId = notif.notificationId
+                                                db.deleteNotification(notif.notificationId)
+                                                notifications = notifications.filter {
+                                                    it.notificationId != notif.notificationId
+                                                }
+                                                deletingId = null
+                                            }
+                                        },
+                                        enabled = deletingId != notif.notificationId
+                                    ) {
+                                        if (deletingId == notif.notificationId) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(18.dp),
+                                                color = Color(0xFFD32F2F),
+                                                strokeWidth = 2.dp
+                                            )
+                                        } else {
+                                            Icon(
+                                                imageVector = Icons.Default.Delete,
+                                                contentDescription = "Delete notification",
+                                                tint = Color(0xFFBDBDBD),
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -1085,14 +1138,14 @@ fun EducationScreen(onClose: () -> Unit, onPointsEarned: () -> Unit = {}) {
                                         !quizSubmitted && isSelected -> Color(0xFF4CAF50).copy(alpha = 0.15f)
                                         !quizSubmitted -> Color(0xFFF5F5F5)
                                         isCorrect -> Color(0xFF4CAF50).copy(alpha = 0.2f)
-                                        isSelected && !isCorrect -> Color(0xFFFFCDD2)
+                                        isSelected -> Color(0xFFFFCDD2)   // submitted, not correct, was selected
                                         else -> Color(0xFFF5F5F5)
                                     }
                                     val borderColor = when {
                                         !quizSubmitted && isSelected -> Color(0xFF4CAF50)
                                         !quizSubmitted -> Color(0xFFE0E0E0)
                                         isCorrect -> Color(0xFF4CAF50)
-                                        isSelected && !isCorrect -> Color(0xFFD32F2F)
+                                        isSelected -> Color(0xFFD32F2F)   // submitted, not correct, was selected
                                         else -> Color(0xFFE0E0E0)
                                     }
                                     Card(
@@ -1100,7 +1153,7 @@ fun EducationScreen(onClose: () -> Unit, onPointsEarned: () -> Unit = {}) {
                                             .clickable(enabled = !quizSubmitted) { selectedChoice = index },
                                         shape = RoundedCornerShape(10.dp),
                                         colors = CardDefaults.cardColors(containerColor = bgColor),
-                                        border = androidx.compose.foundation.BorderStroke(1.5.dp, borderColor)
+                                        border = BorderStroke(1.5.dp, borderColor)
                                     ) {
                                         Row(
                                             modifier = Modifier.fillMaxWidth().padding(14.dp),
@@ -1116,7 +1169,7 @@ fun EducationScreen(onClose: () -> Unit, onPointsEarned: () -> Unit = {}) {
                                                     Text(
                                                         when {
                                                             quizSubmitted && isCorrect -> "✓"
-                                                            quizSubmitted && isSelected && !isCorrect -> "✗"
+                                                            quizSubmitted && isSelected -> "✗"
                                                             else -> listOf("A","B","C","D")[index]
                                                         },
                                                         fontSize = 13.sp, fontWeight = FontWeight.Bold,
@@ -1235,11 +1288,23 @@ fun EducationScreen(onClose: () -> Unit, onPointsEarned: () -> Unit = {}) {
 fun CampaignScreen(onClose: () -> Unit) {
     val scope = rememberCoroutineScope()
     val db = remember { FirebaseHelper() }
+    val userId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
     var campaigns by remember { mutableStateOf<List<Campaign>>(emptyList()) }
-    var selectedCampaign by remember { mutableStateOf<Campaign?>(null) }
+    var joinedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var isLoading by remember { mutableStateOf(true) }
+    var joiningId by remember { mutableStateOf<String?>(null) }
+    var selectedCampaign by remember { mutableStateOf<Campaign?>(null) }
 
-    LaunchedEffect(Unit) { campaigns = db.getCampaigns(); isLoading = false }
+    LaunchedEffect(Unit) {
+        campaigns = db.getCampaigns()
+        // Load which campaigns this user has already joined
+        val joined = mutableSetOf<String>()
+        campaigns.forEach { camp ->
+            if (db.hasJoinedCampaign(camp.campaignId, userId)) joined.add(camp.campaignId)
+        }
+        joinedIds = joined
+        isLoading = false
+    }
 
     Dialog(onDismissRequest = onClose) {
         Card(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.9f), shape = RoundedCornerShape(16.dp)) {
@@ -1247,49 +1312,195 @@ fun CampaignScreen(onClose: () -> Unit) {
                 Text("🌍 Environmental Campaigns", fontSize = 22.sp, fontWeight = FontWeight.Bold)
                 Text("Join campaigns to make a difference", fontSize = 13.sp, color = Color.Gray)
                 Spacer(modifier = Modifier.height(16.dp))
+
                 if (isLoading) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 } else if (campaigns.isEmpty()) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("📭", fontSize = 64.sp); Text("No campaigns available", color = Color.Gray)
+                            Text("📭", fontSize = 64.sp)
+                            Text("No campaigns available", color = Color.Gray)
                         }
                     }
                 } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(campaigns) { camp ->
-                            Card(modifier = Modifier.fillMaxWidth().clickable { selectedCampaign = camp },
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(campaigns, key = { it.campaignId }) { camp ->
+                            val isAnnouncement = camp.pointsReward == 0 && camp.postedBy.isNotBlank()
+                            val hasJoined = joinedIds.contains(camp.campaignId)
+                            val isCompleted = camp.status == "COMPLETED"
+                            val isJoining = joiningId == camp.campaignId
+
+                            val statusColor = when (camp.status) {
+                                "ACTIVE"    -> Color(0xFF4CAF50)
+                                "COMPLETED" -> Color(0xFF2196F3)
+                                "UPCOMING"  -> Color(0xFFFF9800)
+                                else        -> Color(0xFF607D8B)
+                            }
+
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { selectedCampaign = camp },
                                 shape = RoundedCornerShape(12.dp),
-                                colors = CardDefaults.cardColors(containerColor = Color.White),
-                                elevation = CardDefaults.cardElevation(1.dp)) {
-                                Column(modifier = Modifier.padding(16.dp)) {
-                                    Row(modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (hasJoined) Color(0xFFE8F5E9) else Color.White
+                                ),
+                                elevation = CardDefaults.cardElevation(1.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(14.dp)) {
+                                    // Title + status badge
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.Top) {
-                                        Text(camp.title, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                                        if (camp.pointsReward > 0) {
-                                            Surface(shape = RoundedCornerShape(8.dp), color = Color(0xFFFF9800).copy(alpha = 0.1f)) {
-                                                Text("+${camp.pointsReward} pts",
-                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                                    fontSize = 12.sp, color = Color(0xFFFF9800), fontWeight = FontWeight.SemiBold)
-                                            }
-                                        } else {
-                                            // Authority announcement badge
-                                            Surface(shape = RoundedCornerShape(8.dp), color = Color(0xFF1565C0).copy(alpha = 0.1f)) {
-                                                Text("📢 Announcement",
-                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                                    fontSize = 11.sp, color = Color(0xFF1565C0), fontWeight = FontWeight.SemiBold)
-                                            }
+                                        verticalAlignment = Alignment.Top
+                                    ) {
+                                        Text(
+                                            camp.title,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 15.sp,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = statusColor.copy(alpha = 0.15f)
+                                        ) {
+                                            Text(
+                                                camp.status,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                                fontSize = 10.sp,
+                                                color = statusColor,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
                                         }
                                     }
-                                    Text(camp.description, fontSize = 12.sp, color = Color.Gray, maxLines = 2)
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    // Posted by authority name
-                                    if (camp.postedBy.isNotBlank()) {
-                                        Text("🏛️ Posted by: ${camp.postedBy}", fontSize = 11.sp, color = Color(0xFF1565C0))
+
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(camp.description, fontSize = 13.sp, color = Color.Gray, maxLines = 2)
+
+                                    if (!camp.location.isNullOrBlank()) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text("📍 ${camp.location}", fontSize = 12.sp, color = Color(0xFF1565C0))
                                     }
-                                    if (camp.location != null) {
-                                        Text("📍 ${camp.location}", fontSize = 12.sp, color = Color.Gray)
+
+                                    if (camp.postedBy.isNotBlank()) {
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text("🏛️ ${camp.postedBy}", fontSize = 11.sp, color = Color.Gray)
+                                    }
+
+                                    // Dates — locale read observably so Compose recomposes on locale change
+                                    val locale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
+                                    val sdf = java.text.SimpleDateFormat("MMM dd, yyyy", locale)
+                                    val startStr = sdf.format(camp.startDate.toDate())
+                                    val endStr   = sdf.format(camp.endDate.toDate())
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text("📅 $startStr → $endStr", fontSize = 11.sp, color = Color.Gray)
+
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    HorizontalDivider(color = Color(0xFFF0F0F0))
+                                    Spacer(modifier = Modifier.height(8.dp))
+
+                                    // Footer: points chip + join status
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        if (!isAnnouncement && camp.pointsReward > 0) {
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = Color(0xFFFF9800).copy(alpha = 0.1f)
+                                            ) {
+                                                Text(
+                                                    "⭐ +${camp.pointsReward} pts",
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                    fontSize = 11.sp,
+                                                    color = Color(0xFFFF9800),
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            }
+                                        } else {
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = Color(0xFF1565C0).copy(alpha = 0.1f)
+                                            ) {
+                                                Text(
+                                                    "📢 Announcement",
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                    fontSize = 11.sp,
+                                                    color = Color(0xFF1565C0),
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            }
+                                        }
+
+                                        when {
+                                            isAnnouncement -> {}
+                                            isCompleted && hasJoined -> Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = Color(0xFF2196F3).copy(alpha = 0.12f)
+                                            ) {
+                                                Text(
+                                                    "✓ Points Awarded",
+                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                                    fontSize = 11.sp,
+                                                    color = Color(0xFF2196F3),
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            }
+                                            hasJoined -> Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = Color(0xFF4CAF50).copy(alpha = 0.12f)
+                                            ) {
+                                                Text(
+                                                    "✓ Joined",
+                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                                    fontSize = 11.sp,
+                                                    color = Color(0xFF4CAF50),
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            }
+                                            isCompleted -> Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = Color.Gray.copy(alpha = 0.1f)
+                                            ) {
+                                                Text(
+                                                    "Closed",
+                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                                    fontSize = 11.sp,
+                                                    color = Color.Gray
+                                                )
+                                            }
+                                            else -> Button(
+                                                onClick = {
+                                                    scope.launch {
+                                                        joiningId = camp.campaignId
+                                                        if (db.joinCampaign(camp.campaignId, userId)) {
+                                                            joinedIds = joinedIds + camp.campaignId
+                                                        }
+                                                        joiningId = null
+                                                    }
+                                                },
+                                                enabled = !isJoining,
+                                                shape = RoundedCornerShape(8.dp),
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = Color(0xFF4CAF50)
+                                                ),
+                                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                                            ) {
+                                                if (isJoining) {
+                                                    CircularProgressIndicator(
+                                                        modifier = Modifier.size(14.dp),
+                                                        color = Color.White,
+                                                        strokeWidth = 2.dp
+                                                    )
+                                                } else {
+                                                    Text("Join", fontSize = 12.sp)
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1299,48 +1510,175 @@ fun CampaignScreen(onClose: () -> Unit) {
             }
         }
     }
-
+    // Campaign detail dialog
     selectedCampaign?.let { camp ->
+        val hasJoined = joinedIds.contains(camp.campaignId)
+        val isCompleted = camp.status == "COMPLETED"
+        val isJoining = joiningId == camp.campaignId
         val isAnnouncement = camp.pointsReward == 0 && camp.postedBy.isNotBlank()
-        AlertDialog(
-            onDismissRequest = { selectedCampaign = null },
-            title = { Text(if (isAnnouncement) "📢 ${camp.title}" else camp.title) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(camp.description)
-                    if (camp.postedBy.isNotBlank()) {
-                        Text("🏛️ Posted by: ${camp.postedBy}", fontSize = 12.sp, color = Color(0xFF1565C0))
+        val statusColor = when (camp.status) {
+            "ACTIVE"    -> Color(0xFF4CAF50)
+            "COMPLETED" -> Color(0xFF2196F3)
+            "UPCOMING"  -> Color(0xFFFF9800)
+            else        -> Color(0xFF607D8B)
+        }
+        val locale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
+        val sdf = java.text.SimpleDateFormat("MMM dd, yyyy", locale)
+
+        Dialog(onDismissRequest = { selectedCampaign = null }) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(24.dp)
+                ) {
+                    // Status badge
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = statusColor.copy(alpha = 0.15f)
+                    ) {
+                        Text(
+                            camp.status,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            fontSize = 11.sp,
+                            color = statusColor,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
-                    if (camp.location != null) {
-                        Text("📍 ${camp.location}", fontSize = 12.sp)
-                    }
-                    if (!isAnnouncement) {
-                        Text("🏆 +${camp.pointsReward} pts on joining", fontSize = 12.sp, color = Color(0xFFFF9800))
-                    }
-                }
-            },
-            confirmButton = {
-                if (isAnnouncement) {
-                    // Announcements just get acknowledged, no points
-                    TextButton(onClick = { selectedCampaign = null }) { Text("Got it") }
-                } else {
-                    TextButton(onClick = {
-                        scope.launch {
-                            val uid = FirebaseAuth.getInstance().currentUser?.uid
-                            if (uid != null) {
-                                db.incrementUserPoints(uid, camp.pointsReward)
-                            }
-                            selectedCampaign = null; onClose()
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Text(camp.title, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(camp.description, fontSize = 14.sp, color = Color(0xFF444444), lineHeight = 20.sp)
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    HorizontalDivider(color = Color(0xFFF0F0F0))
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    if (!camp.location.isNullOrBlank()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("📍", fontSize = 14.sp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(camp.location, fontSize = 13.sp, color = Color(0xFF1565C0))
                         }
-                    }) { Text("Join Campaign") }
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("📅", fontSize = 14.sp)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            "${sdf.format(camp.startDate.toDate())} → ${sdf.format(camp.endDate.toDate())}",
+                            fontSize = 13.sp, color = Color.Gray
+                        )
+                    }
+
+                    if (!isAnnouncement && camp.pointsReward > 0) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("⭐", fontSize = 14.sp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("+${camp.pointsReward} points awarded on completion",
+                                fontSize = 13.sp, color = Color(0xFFFF9800), fontWeight = FontWeight.Medium)
+                        }
+                    }
+
+                    if (camp.postedBy.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("🏛️", fontSize = 14.sp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Posted by ${camp.postedBy}", fontSize = 13.sp, color = Color.Gray)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    // Action buttons
+                    if (!isAnnouncement) {
+                        when {
+                            isCompleted && hasJoined -> Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF2196F3).copy(alpha = 0.12f)
+                            ) {
+                                Text(
+                                    "✓ Points Awarded — Thank you for participating!",
+                                    modifier = Modifier.padding(16.dp),
+                                    fontSize = 14.sp,
+                                    color = Color(0xFF2196F3),
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            hasJoined -> Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF4CAF50).copy(alpha = 0.12f)
+                            ) {
+                                Text(
+                                    "✓ You've joined this campaign",
+                                    modifier = Modifier.padding(16.dp),
+                                    fontSize = 14.sp,
+                                    color = Color(0xFF4CAF50),
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            isCompleted -> Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color.Gray.copy(alpha = 0.1f)
+                            ) {
+                                Text(
+                                    "This campaign has ended",
+                                    modifier = Modifier.padding(16.dp),
+                                    fontSize = 14.sp,
+                                    color = Color.Gray
+                                )
+                            }
+                            else -> Button(
+                                onClick = {
+                                    scope.launch {
+                                        joiningId = camp.campaignId
+                                        if (db.joinCampaign(camp.campaignId, userId)) {
+                                            joinedIds = joinedIds + camp.campaignId
+                                        }
+                                        joiningId = null
+                                    }
+                                },
+                                enabled = !isJoining,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50)),
+                                contentPadding = PaddingValues(vertical = 14.dp)
+                            ) {
+                                if (isJoining) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        color = Color.White,
+                                        strokeWidth = 2.dp
+                                    )
+                                } else {
+                                    Text("Join Campaign", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
+
+                    OutlinedButton(
+                        onClick = { selectedCampaign = null },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    ) { Text("Close") }
                 }
-            },
-            dismissButton = { TextButton(onClick = { selectedCampaign = null }) { Text("Close") } }
-        )
+            }
+        }
     }
 }
-
-// ==================== Leaderboard Screen (shared — Resident and Authority both use this) ====================
 @Composable
 fun LeaderboardScreen(onClose: () -> Unit) {
     val db = remember { FirebaseHelper() }
