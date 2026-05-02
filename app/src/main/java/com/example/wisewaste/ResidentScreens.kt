@@ -406,7 +406,7 @@ fun ResidentDashboardScreen(onLogout: () -> Unit) {
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("📝 Report a waste issue: +10–25 pts")
-                    Text("📚 Complete educational content: +10 pts each")
+                    Text("📚 Complete educational content: +5 pts each")
                     Text("🌍 Join a campaign: +50 pts per campaign")
                     Text("🔝 Higher-ranked waste types earn more pts/kg")
                 }
