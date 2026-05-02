@@ -75,16 +75,6 @@ data class DashboardMenuItem(
 
 // ==================== New Models for Authority Features ====================
 
-data class Announcement(
-    val announcementId: String = "",
-    val authorityId: String = "",
-    val authorityName: String = "",
-    val title: String = "",
-    val message: String = "",
-    val createdAt: Timestamp = Timestamp.now(),
-    val priority: String = "NORMAL" // NORMAL, HIGH, URGENT
-)
-
 data class CollectionSchedule(
     val scheduleId: String = "",
     val area: String = "",
