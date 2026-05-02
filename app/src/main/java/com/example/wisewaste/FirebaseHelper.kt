@@ -22,17 +22,6 @@ class FirebaseHelper {
         }
     }
 
-    suspend fun updateUserPoints(userId: String, newPoints: Int): Boolean {
-        return try {
-            db.collection("users").document(userId).update("totalPoints", newPoints).await()
-            true
-        } catch (e: Exception) {
-            Log.e(tag, "updateUserPoints failed for userId=$userId", e)
-            false
-        }
-    }
-
-    /** Atomically adds [delta] points — never overwrites, safe against race conditions */
     suspend fun incrementUserPoints(userId: String, delta: Int): Boolean {
         return try {
             db.collection("users").document(userId)
@@ -45,20 +34,6 @@ class FirebaseHelper {
         }
     }
 
-    /**
-     * Reconcile points for existing COMPLETED reports that were marked complete
-     * before the points-award fix was deployed.
-     *
-     * Logic:
-     *  - Fetch all of this user's COMPLETED reports from Firestore.
-     *  - Sum their pointsAwarded values — this is the minimum the user should have.
-     *  - If the stored totalPoints is LESS than that sum, overwrite with the sum
-     *    so no completed report goes un-credited.
-     *  - If totalPoints is already equal or higher (e.g. from quizzes/campaigns
-     *    that were correctly awarded), leave it untouched.
-     *
-     * Safe to call on every dashboard load — it is a no-op once points are correct.
-     */
     suspend fun reconcileCompletedPoints(userId: String): Int {
         return try {
             // Read all COMPLETED reports for this user directly (uses existing index)
@@ -75,7 +50,7 @@ class FirebaseHelper {
 
             Log.d(tag, "reconcileCompletedPoints: userId=$userId completedSum=$completedPointsSum")
 
-            if (completedPointsSum <= 0) return@reconcileCompletedPoints completedPointsSum
+            if (completedPointsSum <= 0) return completedPointsSum
 
             // Read the user's current totalPoints
             val userDoc = db.collection("users").document(userId).get().await()
@@ -115,10 +90,6 @@ class FirebaseHelper {
         }
     }
 
-    /**
-     * Resident: fetch only this user's reports.
-     * Uses the existing composite index: userId (ASC) + reportDate (DESC).
-     */
     suspend fun getUserReports(userId: String): List<WasteReport> {
         return try {
             db.collection("wasteReports")
@@ -134,17 +105,6 @@ class FirebaseHelper {
         }
     }
 
-    /**
-     * Authority: fetch ALL reports across all users.
-     *
-     * No .orderBy() is used here because fetching all documents without a
-     * userId filter would need a separate single-field or collection-group
-     * index that isn't in your current Firestore setup. We fetch the whole
-     * collection and sort newest-first in memory instead — correct and fast
-     * for typical community-app volumes.
-     *
-     * Optional [statusFilter] is also applied in memory after the fetch.
-     */
     suspend fun getAllReports(statusFilter: String? = null): List<WasteReport> {
         return try {
             val allDocs = db.collection("wasteReports")
@@ -172,16 +132,6 @@ class FirebaseHelper {
         }
     }
 
-    /**
-     * Authority: update a report's status.
-     *
-     * When marking COMPLETED:
-     *  1. Reads pointsAwarded from Firestore BEFORE updating status (guards
-     *     against local-object deserialization mismatches and avoids a second
-     *     round-trip after the write).
-     *  2. Atomically increments the resident's totalPoints via FieldValue.increment.
-     *  3. Sends a notification to the resident (non-critical).
-     */
     suspend fun updateReportStatus(
         reportId: String,
         newStatus: String,
@@ -451,7 +401,45 @@ class FirebaseHelper {
         }
     }
 
-    // ==================== Guidelines ====================
+    // ==================== Learn & Earn Progress ====================
+    suspend fun getCompletedContentIds(userId: String): Set<String> {
+        return try {
+            val doc = db.collection("userProgress").document(userId).get().await()
+            @Suppress("UNCHECKED_CAST")
+            val list = doc.get("completedContent") as? List<String> ?: emptyList()
+            list.toSet()
+        } catch (e: Exception) {
+            Log.e(tag, "getCompletedContentIds failed for userId=$userId", e)
+            emptySet()
+        }
+    }
+
+    suspend fun markContentCompleted(userId: String, contentId: String, points: Int): Boolean {
+        return try {
+            // 1. Add contentId to the completed array (idempotent)
+            db.collection("userProgress").document(userId)
+                .set(
+                    mapOf("completedContent" to FieldValue.arrayUnion(contentId)),
+                    com.google.firebase.firestore.SetOptions.merge()
+                )
+                .await()
+
+            // 2. Award points only if not already completed (checked by caller)
+            if (points > 0) {
+                db.collection("users").document(userId)
+                    .update("totalPoints", FieldValue.increment(points.toLong()))
+                    .await()
+            }
+
+            Log.d(tag, "markContentCompleted: userId=$userId contentId=$contentId pts=$points")
+            true
+        } catch (e: Exception) {
+            Log.e(tag, "markContentCompleted failed: ${e.message}", e)
+            false
+        }
+    }
+
+
 
     suspend fun getGuidelines(): List<Guideline> {
         return try {

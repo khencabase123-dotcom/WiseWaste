@@ -213,15 +213,22 @@ fun LoginScreen(onLoginSuccess: (role: String) -> Unit) {
 
                     // Sign up / Login toggle — residents only
                     if (selectedRole == "RESIDENT") {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
                                 if (isRegistering) "Already have an account? " else "Don't have an account? ",
                                 color = Color.Gray, fontSize = 14.sp
                             )
-                            TextButton(onClick = {
-                                isRegistering = !isRegistering
-                                errorMessage = null; username = ""; email = ""; password = ""
-                            }) {
+                            TextButton(
+                                onClick = {
+                                    isRegistering = !isRegistering
+                                    errorMessage = null; username = ""; email = ""; password = ""
+                                },
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
                                 Text(if (isRegistering) "Login" else "Sign Up", color = Color(0xFF4CAF50), fontSize = 14.sp)
                             }
                         }
@@ -276,6 +283,7 @@ fun ResidentDashboardScreen(onLogout: () -> Unit) {
     var selectedMenuItem by remember { mutableStateOf<String?>(null) }
     var refreshKey by remember { mutableStateOf(0) }
     val userId = authManager.getCurrentUserId()
+
     LaunchedEffect(userId, refreshKey, selectedMenuItem) {
         if (userId != null && selectedMenuItem == null) {
             reportCount = db.getUserReports(userId).size
@@ -461,7 +469,9 @@ fun NotificationsScreen(onClose: () -> Unit) {
     val userId = FirebaseAuth.getInstance().currentUser?.uid
 
     LaunchedEffect(userId) {
-        if (userId != null) notifications = db.getUserNotifications(userId)
+        if (userId != null) {
+            notifications = db.getUserNotifications(userId)
+        }
         isLoading = false
     }
 
@@ -507,7 +517,7 @@ fun NotificationsScreen(onClose: () -> Unit) {
                                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                             Text(notif.title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                                             if (!notif.isRead) Surface(shape = RoundedCornerShape(50), color = Color(0xFF4CAF50)) {
-                                                Text("NEW", fontSize = 9.sp, color = Color.White,
+                                                Text("NEW", fontSize = 7.sp, color = Color.White,
                                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
                                             }
                                         }
@@ -542,7 +552,7 @@ fun GuidelinesScreen(onClose: () -> Unit) {
 
     LaunchedEffect(Unit) {
         val loaded = db.getGuidelines()
-        guidelines = if (loaded.isNotEmpty()) loaded else fallback
+        guidelines = loaded.ifEmpty { fallback }
         isLoading = false
     }
 
@@ -606,7 +616,7 @@ fun ResidentScheduleScreen(onClose: () -> Unit) {
 
     LaunchedEffect(Unit) {
         val loaded = db.getCollectionSchedules()
-        schedules = if (loaded.isNotEmpty()) loaded else fallback
+        schedules = loaded.ifEmpty { fallback }
         isLoading = false
     }
 
@@ -663,12 +673,12 @@ fun ReportScreen(onClose: () -> Unit, onReported: (() -> Unit) = onClose) {
 
     LaunchedEffect(Unit) {
         val loaded = db.getWasteCategories()
-        categories = if (loaded.isNotEmpty()) loaded else listOf(
+        categories = loaded.ifEmpty { listOf(
             WasteCategory("1", "Biodegradable", pointsPerKg = 10),
             WasteCategory("2", "Recyclable",    pointsPerKg = 15),
             WasteCategory("3", "E-Waste",       pointsPerKg = 20),
             WasteCategory("4", "Residual",      pointsPerKg = 5)
-        )
+        ) }
     }
 
     Dialog(onDismissRequest = onClose) {
@@ -920,7 +930,8 @@ fun EducationScreen(onClose: () -> Unit, onPointsEarned: () -> Unit = {}) {
     var contents by remember { mutableStateOf<List<EducationalContent>>(emptyList()) }
     var selectedContent by remember { mutableStateOf<EducationalContent?>(null) }
     var isLoading by remember { mutableStateOf(true) }
-    // tracks which content IDs have already been completed this session
+    val userId = FirebaseAuth.getInstance().currentUser?.uid
+    // Persisted completion state — loaded from Firestore so it survives across sessions
     var completedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     val fallbackContent = listOf(
@@ -944,7 +955,11 @@ fun EducationScreen(onClose: () -> Unit, onPointsEarned: () -> Unit = {}) {
 
     LaunchedEffect(Unit) {
         val loaded = db.getEducationalContent()
-        contents = if (loaded.isNotEmpty()) loaded else fallbackContent
+        contents = loaded.ifEmpty { fallbackContent }
+        // Load persisted completion state so completed lessons stay marked across sessions
+        if (userId != null) {
+            completedIds = db.getCompletedContentIds(userId)
+        }
         isLoading = false
     }
 
@@ -1179,9 +1194,9 @@ fun EducationScreen(onClose: () -> Unit, onPointsEarned: () -> Unit = {}) {
                                     if (correct && !completedIds.contains(c.contentId)) {
                                         scope.launch {
                                             isAwarding = true
-                                            val uid = FirebaseAuth.getInstance().currentUser?.uid
-                                            if (uid != null) {
-                                                db.incrementUserPoints(uid, c.pointsAwarded)
+                                            if (userId != null) {
+                                                // markContentCompleted persists to Firestore AND awards points atomically
+                                                db.markContentCompleted(userId, c.contentId, c.pointsAwarded)
                                             }
                                             completedIds = completedIds + c.contentId
                                             isAwarding = false

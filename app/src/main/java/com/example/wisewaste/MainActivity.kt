@@ -14,7 +14,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
-import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -31,30 +30,24 @@ fun WiseWasteApp() {
     val auth = FirebaseAuth.getInstance()
     val authManager = remember { AuthManager() }
     val db = remember { FirebaseHelper() }
-    val scope = rememberCoroutineScope()
 
-    // null = still resolving, "" = not logged in, "RESIDENT"/"AUTHORITY" = logged in with known role
     var userRole by remember { mutableStateOf<String?>(null) }
 
-    // On first composition, check if a session already exists and resolve the role
     LaunchedEffect(Unit) {
         val uid = auth.currentUser?.uid
         if (uid == null) {
             userRole = ""   // Not logged in
         } else {
-            // Session exists — fetch role from Firestore before showing any dashboard
             val role = db.getUser(uid)?.role ?: "RESIDENT"
             userRole = role
         }
     }
 
-    // Also listen for sign-out events (e.g. token expiry) to reset state
     DisposableEffect(Unit) {
         val listener = FirebaseAuth.AuthStateListener { firebaseAuth ->
             if (firebaseAuth.currentUser == null) {
-                userRole = ""   // Signed out — go back to login
+                userRole = ""
             }
-            // Sign-in is handled by onLoginSuccess below (we already know the role there)
         }
         auth.addAuthStateListener(listener)
         onDispose { auth.removeAuthStateListener(listener) }
@@ -69,7 +62,6 @@ fun WiseWasteApp() {
     ) {
         when (userRole) {
             null -> {
-                // Resolving session — show spinner, render nothing else
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = Color(0xFF4CAF50))
                 }
@@ -78,7 +70,6 @@ fun WiseWasteApp() {
                 // Not authenticated
                 LoginScreen(
                     onLoginSuccess = { role ->
-                        // Role is provided directly from the login result — no extra Firestore fetch
                         userRole = role
                     }
                 )
@@ -90,7 +81,6 @@ fun WiseWasteApp() {
                 })
             }
             else -> {
-                // "RESIDENT" or any unrecognised role defaults to resident dashboard
                 ResidentDashboardScreen(onLogout = {
                     authManager.logout()
                     userRole = ""
