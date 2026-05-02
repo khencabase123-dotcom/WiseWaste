@@ -401,7 +401,21 @@ class FirebaseHelper {
         }
     }
 
-    // ==================== Learn & Earn Progress ====================
+    suspend fun updateCollectionSchedule(schedule: CollectionSchedule): Boolean {
+        return try {
+            db.collection("collectionSchedules").document(schedule.scheduleId).set(schedule).await()
+            Log.d(tag, "updateCollectionSchedule success: ${schedule.scheduleId}")
+            true
+        } catch (e: Exception) {
+            Log.e(tag, "updateCollectionSchedule failed", e)
+            false
+        }
+    }
+
+    /**
+     * Returns the set of content IDs the user has already completed.
+     * Stored in: userProgress/{userId}/completedContent (array field).
+     */
     suspend fun getCompletedContentIds(userId: String): Set<String> {
         return try {
             val doc = db.collection("userProgress").document(userId).get().await()
@@ -438,8 +452,6 @@ class FirebaseHelper {
             false
         }
     }
-
-
 
     suspend fun getGuidelines(): List<Guideline> {
         return try {

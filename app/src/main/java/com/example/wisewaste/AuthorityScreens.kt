@@ -1,8 +1,7 @@
 package com.example.wisewaste
 
 import androidx.compose.foundation.*
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.layout.*import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -290,7 +289,10 @@ fun ReviewSubmissionsScreen(statusFilter: String?, onClose: () -> Unit) {
     var selectedReport by remember { mutableStateOf<WasteReport?>(null) }
 
     LaunchedEffect(statusFilter) {
-        reports = db.getAllReports(statusFilter)
+        val all = db.getAllReports(statusFilter)
+        // Review screen only shows actionable reports — COMPLETED and REJECTED
+        // are final states and are only visible in Filter Reports
+        reports = all.filter { it.status != "COMPLETED" && it.status != "REJECTED" }
         isLoading = false
     }
 
@@ -330,7 +332,10 @@ fun ReviewSubmissionsScreen(statusFilter: String?, onClose: () -> Unit) {
             onStatusUpdated = { newStatus ->
                 scope.launch {
                     val success = db.updateReportStatus(report.reportId, newStatus, report.userId, report.pointsAwarded)
-                    if (success) reports = db.getAllReports(statusFilter)
+                    if (success) {
+                        val all = db.getAllReports(statusFilter)
+                        reports = all.filter { it.status != "COMPLETED" && it.status != "REJECTED" }
+                    }
                     selectedReport = null
                 }
             }
@@ -354,10 +359,16 @@ fun FilterReportsScreen(onClose: () -> Unit) {
     val scope = rememberCoroutineScope()
     var selectedFilter by remember { mutableStateOf<String?>(null) }
     var reports by remember { mutableStateOf<List<WasteReport>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(false) }
+    var isLoading by remember { mutableStateOf(true) }
     var selectedReport by remember { mutableStateOf<WasteReport?>(null) }
 
     val filters = listOf("ALL", "PENDING", "APPROVED", "COMPLETED", "REJECTED")
+
+    // Load all reports immediately on open — no need to press a filter first
+    LaunchedEffect(Unit) {
+        reports = db.getAllReports(null)
+        isLoading = false
+    }
 
     Dialog(onDismissRequest = onClose) {
         Card(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.92f), shape = RoundedCornerShape(16.dp)) {
@@ -396,18 +407,11 @@ fun FilterReportsScreen(onClose: () -> Unit) {
 
                 if (isLoading) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                } else if (selectedFilter == null && reports.isEmpty()) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("👆", fontSize = 48.sp)
-                            Text("Select a filter above", color = Color.Gray)
-                        }
-                    }
                 } else if (reports.isEmpty()) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text("📭", fontSize = 48.sp)
-                            Text("No reports for this status", color = Color.Gray)
+                            Text("No reports found", color = Color.Gray)
                         }
                     }
                 } else {
@@ -448,6 +452,7 @@ fun CollectionSchedulesScreen(onClose: () -> Unit) {
     var schedules by remember { mutableStateOf<List<CollectionSchedule>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var showAddDialog by remember { mutableStateOf(false) }
+    var editingSchedule by remember { mutableStateOf<CollectionSchedule?>(null) }
 
     LaunchedEffect(Unit) { schedules = db.getCollectionSchedules(); isLoading = false }
 
@@ -456,15 +461,17 @@ fun CollectionSchedulesScreen(onClose: () -> Unit) {
             Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text("🗓️ Collection Schedules", fontSize = 20.sp, fontWeight = FontWeight.Bold)
                         Text("Manage pickup schedules", fontSize = 13.sp, color = Color.Gray)
                     }
+                    Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = { showAddDialog = true },
                         shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00695C))
-                    ) { Text("+ Add") }
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00695C)),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                    ) { Text("+ Add", maxLines = 1) }
                 }
                 Spacer(modifier = Modifier.height(12.dp))
 
@@ -485,9 +492,18 @@ fun CollectionSchedulesScreen(onClose: () -> Unit) {
                                 colors = CardDefaults.cardColors(containerColor = Color.White),
                                 elevation = CardDefaults.cardElevation(1.dp)) {
                                 Column(modifier = Modifier.padding(16.dp)) {
-                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                        Text(s.area, fontWeight = FontWeight.Bold)
-                                        Text(s.dayOfWeek, color = Color(0xFF00695C), fontSize = 13.sp)
+                                    Row(modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(s.area, fontWeight = FontWeight.Bold)
+                                            Text(s.dayOfWeek, color = Color(0xFF00695C), fontSize = 13.sp)
+                                        }
+                                        OutlinedButton(
+                                            onClick = { editingSchedule = s },
+                                            shape = RoundedCornerShape(8.dp),
+                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                                        ) { Text("✏️ Edit", fontSize = 12.sp, maxLines = 1) }
                                     }
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text("♻️ ${s.wasteType} · 🕐 ${s.time}", fontSize = 13.sp, color = Color.Gray)
@@ -512,22 +528,55 @@ fun CollectionSchedulesScreen(onClose: () -> Unit) {
             }
         )
     }
+
+    editingSchedule?.let { schedule ->
+        AddScheduleDialog(
+            existing = schedule,
+            onDismiss = { editingSchedule = null },
+            onSaved = { updated ->
+                scope.launch {
+                    if (db.updateCollectionSchedule(updated)) schedules = db.getCollectionSchedules()
+                    editingSchedule = null
+                }
+            }
+        )
+    }
 }
 
 @Composable
-fun AddScheduleDialog(onDismiss: () -> Unit, onSaved: (CollectionSchedule) -> Unit) {
-    var area by remember { mutableStateOf("") }
-    var wasteType by remember { mutableStateOf("") }
-    var dayOfWeek by remember { mutableStateOf("Monday") }
-    var time by remember { mutableStateOf("") }
-    var notes by remember { mutableStateOf("") }
+fun AddScheduleDialog(
+    existing: CollectionSchedule? = null,
+    onDismiss: () -> Unit,
+    onSaved: (CollectionSchedule) -> Unit
+) {
+    val isEditing = existing != null
+    var area by remember { mutableStateOf(existing?.area ?: "") }
+    var wasteType by remember { mutableStateOf(existing?.wasteType ?: "") }
+    var dayOfWeek by remember { mutableStateOf(existing?.dayOfWeek ?: "Monday") }
+    var notes by remember { mutableStateOf(existing?.notes ?: "") }
     var errorMsg by remember { mutableStateOf<String?>(null) }
     val userId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
     val days = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
+    // Parse existing time into components if editing
+    val parsedHour = existing?.time?.split(":")?.getOrNull(0)?.trim()?.toIntOrNull() ?: 7
+    val parsedMinute = existing?.time?.split(":")?.getOrNull(1)?.trim()?.split(" ")?.getOrNull(0)?.toIntOrNull() ?: 0
+    val parsedAmPm = if (existing?.time?.contains("PM") == true) "PM" else "AM"
+
+    var selectedHour by remember { mutableStateOf(parsedHour) }
+    var selectedMinute by remember { mutableStateOf(parsedMinute) }
+    var selectedAmPm by remember { mutableStateOf(parsedAmPm) }
+    var hourExpanded by remember { mutableStateOf(false) }
+    var minuteExpanded by remember { mutableStateOf(false) }
+    var amPmExpanded by remember { mutableStateOf(false) }
+
+    val hours = (1..12).toList()
+    val minutes = (0..59).toList()
+    val formattedTime = "%02d:%02d %s".format(selectedHour, selectedMinute, selectedAmPm)
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add Collection Schedule") },
+        title = { Text(if (isEditing) "Edit Collection Schedule" else "Add Collection Schedule") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(value = area, onValueChange = { area = it },
@@ -543,9 +592,109 @@ fun AddScheduleDialog(onDismiss: () -> Unit, onSaved: (CollectionSchedule) -> Un
                             label = { Text(day.take(3)) })
                     }
                 }
-                OutlinedTextField(value = time, onValueChange = { time = it },
-                    label = { Text("Time (e.g. 7:00 AM)") }, modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(10.dp), singleLine = true)
+
+                // Time picker — Hour / Minute / AM-PM dropdowns
+                Text("Time", fontSize = 13.sp, color = Color.Gray)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    // Hour dropdown (1–12, scrollable)
+                    Box(modifier = Modifier.weight(1f)) {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().clickable { hourExpanded = true },
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, Color(0xFFBDBDBD))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text("Hr", fontSize = 10.sp, color = Color.Gray)
+                                    Text("%02d".format(selectedHour), fontSize = 14.sp)
+                                }
+                                Text("▾", fontSize = 14.sp, color = Color.Gray)
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = hourExpanded,
+                            onDismissRequest = { hourExpanded = false },
+                            modifier = Modifier.height(200.dp)
+                        ) {
+                            hours.forEach { h ->
+                                DropdownMenuItem(
+                                    text = { Text("%02d".format(h)) },
+                                    onClick = { selectedHour = h; hourExpanded = false }
+                                )
+                            }
+                        }
+                    }
+
+                    Text(":", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+
+                    // Minute dropdown (00–59, scrollable)
+                    Box(modifier = Modifier.weight(1f)) {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().clickable { minuteExpanded = true },
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, Color(0xFFBDBDBD))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text("Min", fontSize = 10.sp, color = Color.Gray)
+                                    Text("%02d".format(selectedMinute), fontSize = 14.sp)
+                                }
+                                Text("▾", fontSize = 14.sp, color = Color.Gray)
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = minuteExpanded,
+                            onDismissRequest = { minuteExpanded = false },
+                            modifier = Modifier.height(200.dp)
+                        ) {
+                            minutes.forEach { m ->
+                                DropdownMenuItem(
+                                    text = { Text("%02d".format(m)) },
+                                    onClick = { selectedMinute = m; minuteExpanded = false }
+                                )
+                            }
+                        }
+                    }
+
+                    // AM/PM dropdown
+                    Box(modifier = Modifier.weight(1f)) {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().clickable { amPmExpanded = true },
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, Color(0xFFBDBDBD))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(selectedAmPm, fontSize = 14.sp)
+                                Text("▾", fontSize = 14.sp, color = Color.Gray)
+                            }
+                        }
+                        DropdownMenu(expanded = amPmExpanded, onDismissRequest = { amPmExpanded = false }) {
+                            listOf("AM", "PM").forEach { ap ->
+                                DropdownMenuItem(
+                                    text = { Text(ap) },
+                                    onClick = { selectedAmPm = ap; amPmExpanded = false }
+                                )
+                            }
+                        }
+                    }
+                }
+
                 OutlinedTextField(value = notes, onValueChange = { notes = it },
                     label = { Text("Notes (optional)") }, modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp))
@@ -556,14 +705,13 @@ fun AddScheduleDialog(onDismiss: () -> Unit, onSaved: (CollectionSchedule) -> Un
             TextButton(onClick = {
                 if (area.isBlank()) { errorMsg = "Area is required"; return@TextButton }
                 if (wasteType.isBlank()) { errorMsg = "Waste type is required"; return@TextButton }
-                if (time.isBlank()) { errorMsg = "Time is required"; return@TextButton }
                 onSaved(CollectionSchedule(
-                    scheduleId = UUID.randomUUID().toString(),
+                    scheduleId = existing?.scheduleId ?: UUID.randomUUID().toString(),
                     area = area.trim(), wasteType = wasteType.trim(),
-                    dayOfWeek = dayOfWeek, time = time.trim(),
+                    dayOfWeek = dayOfWeek, time = formattedTime,
                     notes = notes.ifBlank { null }, createdBy = userId
                 ))
-            }) { Text("Save") }
+            }) { Text(if (isEditing) "Update" else "Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
