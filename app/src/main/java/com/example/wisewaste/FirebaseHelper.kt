@@ -22,49 +22,6 @@ class FirebaseHelper {
         }
     }
 
-    suspend fun reconcileCompletedPoints(userId: String): Int {
-        return try {
-            // Read all COMPLETED reports for this user directly (uses existing index)
-            val completedDocs = db.collection("wasteReports")
-                .whereEqualTo("userId", userId)
-                .whereEqualTo("status", "COMPLETED")
-                .get()
-                .await()
-                .documents
-
-            val completedPointsSum = completedDocs.sumOf { doc ->
-                (doc.getLong("pointsAwarded") ?: doc.getLong("points_awarded") ?: 0L).toInt()
-            }
-
-            Log.d(tag, "reconcileCompletedPoints: userId=$userId completedSum=$completedPointsSum")
-
-            if (completedPointsSum <= 0) return completedPointsSum
-
-            // Read the user's current totalPoints
-            val userDoc = db.collection("users").document(userId).get().await()
-            val currentPoints = (userDoc.getLong("totalPoints") ?: 0L).toInt()
-
-            if (currentPoints < completedPointsSum) {
-                // Points are under-credited — set to the correct minimum
-                db.collection("users").document(userId)
-                    .update("totalPoints", completedPointsSum)
-                    .await()
-                Log.d(tag, "reconcileCompletedPoints: corrected $currentPoints -> $completedPointsSum for $userId")
-                completedPointsSum
-            } else {
-                // Already correct (or higher from other sources) — leave untouched
-                currentPoints
-            }
-        } catch (e: Exception) {
-            Log.e(tag, "reconcileCompletedPoints failed for userId=$userId", e)
-            // Return current stored value as fallback so the UI still shows something
-            try {
-                (db.collection("users").document(userId).get().await()
-                    .getLong("totalPoints") ?: 0L).toInt()
-            } catch (_: Exception) { 0 }
-        }
-    }
-
     // ==================== Waste Reports ====================
 
     suspend fun submitReport(report: WasteReport): Boolean {
@@ -405,59 +362,6 @@ class FirebaseHelper {
         } catch (e: Exception) {
             Log.e(tag, "getLeaderboard failed", e)
             emptyList()
-        }
-    }
-
-    // ==================== Announcements ====================
-
-    suspend fun postAnnouncement(announcement: Announcement): Boolean {
-        return try {
-            db.collection("announcements")
-                .document(announcement.announcementId)
-                .set(announcement)
-                .await()
-
-            val campaign = Campaign(
-                campaignId   = announcement.announcementId,
-                title        = announcement.title,
-                description  = announcement.message,
-                startDate    = announcement.createdAt,
-                endDate      = announcement.createdAt,
-                location     = null,
-                pointsReward = 0,
-                status       = "ACTIVE",
-                postedBy     = announcement.authorityName.ifBlank { "Authority" }
-            )
-            db.collection("campaigns").document(campaign.campaignId).set(campaign).await()
-            Log.d(tag, "Campaign mirror success: ${campaign.campaignId}")
-
-            try {
-                val residents = db.collection("users")
-                    .whereEqualTo("role", "RESIDENT")
-                    .get().await()
-                val batch = db.batch()
-                residents.documents.forEach { doc ->
-                    val notifId = java.util.UUID.randomUUID().toString()
-                    val notif = Notification(
-                        notificationId = notifId,
-                        userId         = doc.id,
-                        title          = announcement.title,
-                        message        = announcement.message,
-                        type           = "ANNOUNCEMENT",
-                        relatedId      = announcement.announcementId
-                    )
-                    batch.set(db.collection("notifications").document(notifId), notif)
-                }
-                batch.commit().await()
-            } catch (broadcastEx: Exception) {
-                Log.w(tag, "Notification broadcast failed (non-critical)", broadcastEx)
-            }
-
-            Log.d(tag, "postAnnouncement success: ${announcement.announcementId}")
-            true
-        } catch (e: Exception) {
-            Log.e(tag, "postAnnouncement failed", e)
-            false
         }
     }
 
